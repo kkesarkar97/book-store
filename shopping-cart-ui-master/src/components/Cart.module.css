@@ -1,0 +1,9 @@
+.container{
+    max-width: 40em;
+}
+.image {
+    width: 8em !important;
+    max-height: 11em;
+    min-height: 8em;
+
+}

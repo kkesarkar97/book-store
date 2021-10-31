@@ -1,0 +1,92 @@
+stages:
+  - test
+  - build
+  - package
+  - deploy-staging
+  - e2e-test-staging
+  - deploy-prod
+
+variables:
+  REGISTRY_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+test:
+  image: node:10
+  cache:
+    paths:
+    - node_modules/
+
+  stage: test
+  script:
+    - echo "Running tests"
+    - yarn install
+    - yarn test -- --coverage
+    - yarn run eslint src
+
+
+build:
+  image: node:10
+  stage: build
+  script: 
+    - echo "Building the app"
+    - yarn install
+    - yarn build
+  artifacts:
+    paths:
+    - build
+
+
+docker-build:
+  image: docker:latest
+  services:
+    - docker:dind
+  stage: package
+  script:
+    - docker build -t $REGISTRY_IMAGE .
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker push $REGISTRY_IMAGE
+
+k8s-deploy-staging:
+  image: google/cloud-sdk
+  stage: deploy-staging
+  script:
+    - echo "$GOOGLE_KEY" > key.json
+    - gcloud auth activate-service-account --key-file key.json
+    - gcloud config set compute/zone asia-south1-a
+    - gcloud config set project shoppingcart-233217
+    - gcloud container clusters get-credentials shopping-cart-cluster
+    - kubectl create namespace staging 2>/dev/null || echo "namespace staging already exist"
+    - kubectl delete secret shopping-cart-ui-registry --namespace=staging 2>/dev/null || echo "secret does not exist"
+    - kubectl create secret docker-registry shopping-cart-ui-registry --docker-server=https://registry.gitlab.com --docker-username=gitlab+deploy-token-50222 --docker-password=$REGISTRY_PASSWD --namespace=staging
+    - kubectl delete configmap url-config --namespace=staging 2>/dev/null || echo "configmap staging does not exist"
+    - kubectl create configmap url-config --from-literal=api.url=$API_URL_STAGING --namespace=staging
+    - kubectl apply -f deployment.yml --namespace=staging
+    - kubectl set image deployment/shopping-cart-ui shopping-cart-ui=$REGISTRY_IMAGE --namespace=staging
+  environment:
+    name: staging
+    url: $UI_URL_STAGING
+
+run-e2e-test-staging:
+  stage: e2e-test-staging
+  script:
+    - "curl -X POST -F token=$E2E_TRIGGER_TOKEN -F ref=master https://gitlab.com/api/v4/projects/11387194/trigger/pipeline"
+
+k8s-deploy-production:
+  image: google/cloud-sdk
+  stage: deploy-prod
+  script:
+    - echo "$GOOGLE_KEY" > key.json
+    - gcloud auth activate-service-account --key-file key.json
+    - gcloud config set compute/zone asia-south1-a
+    - gcloud config set project shoppingcart-233217
+    - gcloud container clusters get-credentials shopping-cart-cluster
+    - kubectl create namespace production 2>/dev/null || echo "namespace production already exist"
+    - kubectl delete secret shopping-cart-ui-registry --namespace=production 2>/dev/null || echo "secret does not exist"
+    - kubectl create secret docker-registry shopping-cart-ui-registry --docker-server=https://registry.gitlab.com --docker-username=gitlab+deploy-token-50222 --docker-password=$REGISTRY_PASSWD --namespace=production
+    - kubectl delete configmap url-config --namespace=production 2>/dev/null || echo "configmap production does not exist"
+    - kubectl create configmap url-config --from-literal=api.url=$API_URL_PROD --namespace=production
+    - kubectl apply -f deployment.yml --namespace=production
+    - kubectl set image deployment/shopping-cart-ui shopping-cart-ui=$REGISTRY_IMAGE --namespace=prod
+  environment:
+    name: production
+    url: $UI_URL_PROD
+  when: manual
