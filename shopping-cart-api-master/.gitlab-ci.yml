@@ -1,0 +1,74 @@
+variables:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+
+stages:
+  - build
+  - test
+  - package
+  - deploy
+
+build:
+  image: gradle:alpine
+  stage: build
+  script: gradle --build-cache bootjar
+  artifacts:
+    paths:
+      - build
+      - .gradle
+
+test:
+  image: gradle:alpine
+  stage: test
+  script: gradle test jacocoTestReport
+  artifacts:
+    paths:
+      - build
+      - .gradle
+
+docker-build:
+  image: docker:latest
+  services:
+    - docker:dind
+  stage: package
+  script:
+  - docker build -t $CI_REGISTRY_IMAGE .
+  - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+  - docker push $CI_REGISTRY_IMAGE
+
+
+k8s-deploy-staging:
+  image: google/cloud-sdk
+  stage: deploy
+  script:
+    - echo "$GOOGLE_KEY" > key.json
+    - gcloud auth activate-service-account --key-file key.json
+    - gcloud config set compute/zone asia-south1-a
+    - gcloud config set project shoppingcart-233217
+    - gcloud container clusters get-credentials shopping-cart-cluster
+    - kubectl create namespace staging 2>/dev/null || echo "namespace staging already exist"
+    - kubectl delete secret shopping-cart-api-registry --namespace=staging 2>/dev/null || echo "secret does not exist"
+    - kubectl create secret docker-registry shopping-cart-api-registry --docker-server=https://registry.gitlab.com --docker-username=gitlab+deploy-token-50111 --docker-password=$REGISTRY_PASSWD --namespace=staging
+    - kubectl apply -f deployment-db.yml --namespace=staging
+    - kubectl apply -f deployment.yml --namespace=staging
+  environment:
+    name: staging
+    url: http://35.200.161.52/
+
+k8s-deploy-production:
+  image: google/cloud-sdk
+  stage: deploy
+  script:
+    - echo "$GOOGLE_KEY" > key.json
+    - gcloud auth activate-service-account --key-file key.json
+    - gcloud config set compute/zone asia-south1-a
+    - gcloud config set project shoppingcart-233217
+    - gcloud container clusters get-credentials shopping-cart-cluster
+    - kubectl create namespace production 2>/dev/null || echo "namespace production already exist"
+    - kubectl delete secret shopping-cart-api-registry --namespace=production 2>/dev/null || echo "secret does not exist"
+    - kubectl create secret docker-registry shopping-cart-api-registry --docker-server=https://registry.gitlab.com --docker-username=gitlab+deploy-token-50111 --docker-password=$REGISTRY_PASSWD --namespace=production
+    - kubectl apply -f deployment-db.yml --namespace=production
+    - kubectl apply -f deployment.yml --namespace=production
+  environment:
+    name: production
+    url: http://35.200.161.52/
+  when: manual

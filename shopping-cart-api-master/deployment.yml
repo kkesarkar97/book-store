@@ -1,0 +1,33 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: shopping-cart-api
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: shopping-cart-api
+    spec:
+      containers:
+        - name: shopping-cart-api
+          image: registry.gitlab.com/abhijeetkesarkar/devbootcamp/shopping-cart/shopping-cart-api
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+      imagePullSecrets:
+        - name: shopping-cart-api-registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shopping-cart-service
+  labels:
+    app: shopping-cart-api
+spec:
+  ports:
+    - port: 80
+      targetPort: 8080
+  selector:
+    app: shopping-cart-api
+  type: LoadBalancer
